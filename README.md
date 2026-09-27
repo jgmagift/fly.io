@@ -8,7 +8,20 @@ pnpm dev        # http://localhost:5173
 pnpm build      # type-check + static build into dist/
 ```
 
-Controls: arrow keys or A / D to steer, or hold either half of the screen on a phone. Space or Enter to start, Esc for the menu, M to mute.
+Controls: arrow keys or A / D to steer, or hold either half of the screen on a phone. Space or Enter to start, C to change the camera view, Esc for the menu, M to mute.
+
+Camera views: far, chase, near and cockpit. The cockpit view puts you on the plane and rolls with it.
+
+## Meta Quest (VR)
+
+WebXR only runs on secure pages, so plain `http://` addresses will not offer VR.
+
+- **Deployed:** open the Vercel URL in the Quest browser and press PLAY IN VR.
+- **Local:** run `pnpm dev:vr`, then open `https://<your-computer-ip>:5173` in the Quest browser. Accept the certificate warning (Advanced, then Proceed) and press PLAY IN VR.
+
+VR controls: thumbstick steers, trigger or A / X starts, B / Y changes the camera view, grip on the game over screen goes back to the plane menu.
+
+For comfort in VR the horizon never rolls and the camera never shakes. Crashes buzz the controllers instead.
 
 ## Milestones
 

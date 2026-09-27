@@ -3,6 +3,7 @@ import { formatScore } from './score'
 interface HudHandlers {
   onMenu: () => void
   onToggleSound: () => void
+  onCycleCamera: () => void
 }
 
 export interface RunSummary {
@@ -25,6 +26,7 @@ export class Hud {
   private readonly finalEl: HTMLElement
   private readonly bestEl: HTMLElement
   private readonly soundEl: HTMLElement
+  private readonly camEl: HTMLElement
   private readonly showTouchHint: boolean
   private lastScore = -1
   private lastMultiplier = -1
@@ -42,7 +44,10 @@ export class Hud {
         <div class="hud-row"><span class="hud-label">SPEED</span><span class="hud-value" data-speed>0</span></div>
         <div class="hud-row"><span class="hud-label">LIVES</span><span class="hud-lives" data-lives></span></div>
       </div>
-      <button class="hud-sound" data-sound></button>
+      <div class="hud-buttons">
+        <button class="hud-button" data-cam></button>
+        <button class="hud-button" data-sound></button>
+      </div>
       <div class="hud-hint" data-hint hidden>hold the left or right side of the screen to steer</div>
       <div class="hud-flash" data-flash></div>
       <div class="hud-gameover" data-gameover hidden>
@@ -65,10 +70,15 @@ export class Hud {
     this.finalEl = find('[data-final]')
     this.bestEl = find('[data-best]')
     this.soundEl = find('[data-sound]')
+    this.camEl = find('[data-cam]')
     find('[data-menu]').addEventListener('click', handlers.onMenu)
     this.soundEl.addEventListener('click', () => {
       handlers.onToggleSound()
       this.soundEl.blur()
+    })
+    this.camEl.addEventListener('click', () => {
+      handlers.onCycleCamera()
+      this.camEl.blur()
     })
   }
 
@@ -76,6 +86,10 @@ export class Hud {
   setRunVisible(visible: boolean, touched: boolean): void {
     this.statsEl.hidden = !visible
     this.hintEl.hidden = !(visible && this.showTouchHint && !touched)
+  }
+
+  setCamera(label: string): void {
+    this.camEl.textContent = `CAM \u00b7 ${label}`
   }
 
   setSound(muted: boolean): void {

@@ -169,11 +169,16 @@ body {
   }
 }
 
-.hud-sound {
+.hud-buttons {
   position: absolute;
   top: 14px;
   right: 16px;
   z-index: 5;
+  display: flex;
+  gap: 8px;
+}
+
+.hud-button {
   pointer-events: auto;
   padding: 8px 10px;
   font: inherit;
@@ -365,4 +370,31 @@ body {
   font-size: 10px;
   letter-spacing: 0.14em;
   opacity: 0.7;
+}
+
+.menu-vr {
+  margin-top: 10px;
+  padding: 11px 30px;
+  font: inherit;
+  font-size: 13px;
+  letter-spacing: 0.3em;
+  text-indent: 0.3em;
+  color: #fff4d6;
+  background: rgba(32, 22, 40, 0.45);
+  border: 1px solid rgba(255, 244, 214, 0.6);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.menu-vr-note {
+  max-width: 320px;
+  margin-top: 8px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: #ffc857;
+}
+
+.menu-vr[hidden],
+.menu-vr-note[hidden] {
+  display: none;
 }

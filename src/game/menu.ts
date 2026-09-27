@@ -4,6 +4,7 @@ import { formatScore } from './score'
 interface MenuHandlers {
   onStep: (delta: number) => void
   onPlay: () => void
+  onEnterVR: () => void
 }
 
 const STAT_LABELS = [
@@ -20,6 +21,8 @@ export class Menu {
   private readonly statsEl: HTMLElement
   private readonly dotsEl: HTMLElement
   private readonly bestEl: HTMLElement
+  private readonly vrEl: HTMLElement
+  private readonly vrNoteEl: HTMLElement
   private swipeStartX: number | null = null
 
   constructor(parent: HTMLElement, handlers: MenuHandlers) {
@@ -40,7 +43,9 @@ export class Menu {
         <button class="menu-arrow" data-next aria-label="Next plane">&#8250;</button>
       </div>
       <button class="menu-play" data-play>PLAY</button>
-      <div class="menu-keys">&larr; &rarr; or swipe to choose &middot; space to fly</div>
+      <button class="menu-vr" data-vr hidden>PLAY IN VR</button>
+      <div class="menu-vr-note" data-vr-note hidden></div>
+      <div class="menu-keys">&larr; &rarr; or swipe to choose &middot; space to fly &middot; C camera</div>
     `
     parent.appendChild(this.root)
 
@@ -53,6 +58,9 @@ export class Menu {
     find('[data-prev]').addEventListener('click', () => handlers.onStep(-1))
     find('[data-next]').addEventListener('click', () => handlers.onStep(1))
     find('[data-play]').addEventListener('click', () => handlers.onPlay())
+    this.vrEl = find('[data-vr]')
+    this.vrNoteEl = find('[data-vr-note]')
+    this.vrEl.addEventListener('click', () => handlers.onEnterVR())
 
     // Swipe anywhere on the menu to change plane.
     this.root.addEventListener('pointerdown', (event) => {
@@ -77,6 +85,14 @@ export class Menu {
     let dots = ''
     for (let i = 0; i < count; i++) dots += `<span class="menu-dot${i === index ? ' on' : ''}"></span>`
     this.dotsEl.innerHTML = dots
+  }
+
+  /** Offer VR once the browser confirms a headset, or explain why it cannot start. */
+  setVrStatus(status: 'available' | 'needs-https' | 'failed'): void {
+    this.vrEl.hidden = status === 'needs-https'
+    this.vrNoteEl.hidden = status === 'available'
+    this.vrNoteEl.textContent =
+      status === 'needs-https' ? 'VR needs a secure page. Open the https:// address of this game.' : 'VR could not start. Try again.'
   }
 
   setBest(best: number): void {

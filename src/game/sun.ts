@@ -32,6 +32,15 @@ export class Sun {
     this.fitShadowFrustum()
   }
 
+  /** Change the shadow resolution at runtime. The old map is freed and rebuilt at the new size on the next render. */
+  setShadowMapSize(size: number): void {
+    const shadow = this.light.shadow
+    if (shadow.mapSize.x === size) return
+    shadow.mapSize.set(size, size)
+    shadow.map?.dispose()
+    shadow.map = null
+  }
+
   /** Keep the shadow frustum centred on the ship as it strafes. */
   update(shipX: number): void {
     this.light.target.position.set(shipX, 0, 0)

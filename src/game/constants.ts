@@ -15,6 +15,8 @@ export const SHIP = {
 export const GAME = {
   /** World scroll speed behind the menu. */
   menuSpeed: 45,
+  /** Slower in VR, where standing still while the ground rushes past is hard on the stomach. */
+  vrMenuSpeed: 18,
   /** Score is distance times the multiplier. The multiplier climbs by one for each stretch flown without a crash. */
   multiplierDistance: 600,
   maxMultiplier: 8,
@@ -28,13 +30,9 @@ export const GAME = {
 
 export const CAMERA = {
   fov: 58,
-  near: 0.5,
+  near: 0.1,
   far: 900,
-  offsetY: 5.5,
-  offsetZ: 13,
-  lookAtY: 1.2,
-  lookAheadZ: -40,
-  /** Fraction of the ship's bank the camera copies, for a subtle lean. */
+  /** Fraction of the ship's bank the chase views copy, for a subtle lean. */
   bankFollow: 0.12,
   /** Maximum camera offset at full shake, and how fast shake dies away (per second). */
   shakeDistance: 0.9,
@@ -46,9 +44,46 @@ export const CAMERA = {
   /** Sway half-angle in radians and its speed. Kept small so the camera never sees behind the world. */
   showcaseSwing: 0.6,
   showcaseSwingSpeed: 0.35,
-  /** How quickly the camera glides between the menu view and the chase view (per second). */
+  /** How quickly the camera glides between views (per second). */
   modeBlend: 3,
+  /** Cockpit eye point: this far along the plane (negative is toward the nose), this high above the hull. */
+  cockpitZ: -0.3,
+  cockpitEyeHeight: 0.35,
+  /** Slight nose-down tilt of the cockpit view, in radians, so the nose shows at the bottom of the screen. */
+  cockpitPitch: -0.05,
+  /** Share of the plane's bank the cockpit view rolls with. Full roll tilts the horizon too far to read while weaving. */
+  cockpitRoll: 0.6,
+  /** VR menu: where the player's eyes are, relative to the hovering plane. */
+  vrShowcaseHeight: 1.9,
+  vrShowcaseBack: 5.2,
 } as const
+
+export type CameraView = 'far' | 'chase' | 'near' | 'cockpit'
+
+interface CameraViewSpec {
+  label: string
+  /** Eye height and distance behind the ship. In VR this is exactly where the player's eyes are. */
+  height: number
+  back: number
+  /** Flat screen only: the point the camera aims at, relative to the ship's ground position. */
+  lookY: number
+  lookAhead: number
+  fov: number
+}
+
+/**
+ * Views available during a run. The cockpit eye point comes from each plane's shape, so the cockpit's
+ * position fields only matter while blending; they copy the near view, the closest chase view.
+ */
+export const CAMERA_VIEWS: Record<CameraView, CameraViewSpec> = {
+  far: { label: 'FAR', height: 11, back: 26, lookY: 1, lookAhead: -70, fov: 55 },
+  chase: { label: 'CHASE', height: 5.5, back: 13, lookY: 1.2, lookAhead: -40, fov: 58 },
+  near: { label: 'NEAR', height: 2.7, back: 6.5, lookY: 1.5, lookAhead: -30, fov: 64 },
+  cockpit: { label: 'COCKPIT', height: 2.7, back: 6.5, lookY: 1.5, lookAhead: -30, fov: 74 },
+}
+
+/** The order the camera button steps through, from farthest to closest. */
+export const CAMERA_VIEW_ORDER: readonly CameraView[] = ['far', 'chase', 'near', 'cockpit']
 
 export const WORLD = {
   seed: 1337,

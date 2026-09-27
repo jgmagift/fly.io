@@ -1,8 +1,9 @@
-import { Fog, PCFShadowMap, Scene, WebGLRenderer } from 'three'
+import { Fog, PCFShadowMap, Scene, Vector3, WebGLRenderer } from 'three'
 import { GameAudio } from './audio'
 import { FollowCamera } from './camera'
-import { GAME, PALETTE, SHIP, SKY } from './constants'
+import { CAMERA, CAMERA_VIEWS, GAME, PALETTE, SHIP, SKY } from './constants'
 import { Hud } from './hud'
+import type { RunSummary } from './hud'
 import { Input } from './input'
 import { GameLoop } from './loop'
 import { Menu } from './menu'
@@ -12,9 +13,15 @@ import { Ship } from './ship'
 import { Sky } from './sky'
 import { Sun } from './sun'
 import { Trails } from './trail'
+import { VrHud } from './vrhud'
 import { World } from './world'
 
 type GameState = 'menu' | 'playing' | 'gameover'
+
+/** Shadow map size in VR, where two eyes at 72 to 120 frames a second leave less headroom. */
+const VR_SHADOW_MAP_SIZE = 2048
+
+const _eye = new Vector3()
 
 export class Game {
   private readonly renderer: WebGLRenderer
@@ -28,8 +35,10 @@ export class Game {
   private readonly sky: Sky
   private readonly follow: FollowCamera
   private readonly hud: Hud
+  private readonly vrHud = new VrHud()
   private readonly menu: Menu
   private readonly loop: GameLoop
+  private readonly flatShadowMapSize: number
 
   private state: GameState = 'menu'
   private planeIndex = loadPlaneIndex()
@@ -44,6 +53,7 @@ export class Game {
   /** Seconds of crash immunity left. */
   private invulnerable = 0
   private gameOverTime = 0
+  private lastRun: RunSummary = { score: 0, best: 0, isNewBest: false, distance: 0 }
   /** Distance the world scrolled this frame. The trails stream back by this much. */
   private scrolled = 0
 
@@ -52,12 +62,21 @@ export class Game {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     this.renderer.shadowMap.enabled = true
     this.renderer.shadowMap.type = PCFShadowMap
+    // 'local' puts the origin at the player's eyes when VR starts, so every view works seated or standing.
+    this.renderer.xr.enabled = true
+    this.renderer.xr.setReferenceSpaceType('local')
+    this.renderer.xr.addEventListener('sessionstart', this.onXRStart)
+    this.renderer.xr.addEventListener('sessionend', this.onXREnd)
 
     this.input = new Input(canvas)
     this.ship = new Ship(PLANES[this.planeIndex]!)
     // Phones get a smaller shadow map; the fitted frustum keeps it looking fine.
-    this.sun = new Sun(this.input.isTouchDevice ? 2048 : 4096)
+    this.flatShadowMapSize = this.input.isTouchDevice ? 2048 : 4096
+    this.sun = new Sun(this.flatShadowMapSize)
     this.sky = new Sky(this.sun.direction)
+    this.follow = new FollowCamera(window.innerWidth / window.innerHeight)
+    this.follow.rig.add(this.vrHud.group)
+    this.follow.camera.add(this.vrHud.flashMesh)
 
     this.scene.fog = new Fog(PALETTE.fog, SKY.fogNear, SKY.fogFar)
     this.scene.add(
@@ -68,20 +87,23 @@ export class Game {
       this.sun.light,
       this.sun.light.target,
       this.sun.ambient,
+      this.follow.rig,
     )
 
     this.hud = new Hud(hudRoot, this.input.isTouchDevice, {
       onMenu: this.enterMenu,
       onToggleSound: this.toggleSound,
+      onCycleCamera: this.cycleCamera,
     })
     this.hud.setSound(this.audio.muted)
-    this.menu = new Menu(hudRoot, { onStep: this.stepPlane, onPlay: this.startRun })
-    this.follow = new FollowCamera(window.innerWidth / window.innerHeight)
+    this.hud.setCamera(CAMERA_VIEWS[this.follow.view].label)
+    this.menu = new Menu(hudRoot, { onStep: this.stepPlane, onPlay: this.startRun, onEnterVR: this.enterVR })
     this.loop = new GameLoop(this.frame)
 
     window.addEventListener('resize', this.resize)
     this.resize()
     this.enterMenu()
+    this.detectVR()
   }
 
   start(): void {
@@ -91,9 +113,12 @@ export class Game {
   private readonly frame = (dt: number): void => {
     this.time += dt
     this.scrolled = 0
+    const inVR = this.renderer.xr.isPresenting
+    this.input.pollXR(inVR ? this.renderer.xr.getSession() : null)
     if (this.input.consumeKey('KeyM')) this.toggleSound()
+    if (this.input.consumeKey('KeyC', 'XRCamera')) this.cycleCamera()
 
-    if (this.state === 'menu') this.browse(dt)
+    if (this.state === 'menu') this.browse(dt, inVR)
     else if (this.state === 'playing') this.play(dt)
     else this.waitForRestart(dt)
 
@@ -104,23 +129,32 @@ export class Game {
     this.trails.update(this.ship, this.scrolled)
     this.sun.update(this.ship.x)
     this.follow.update(dt, this.time, this.ship)
-    this.sky.update(this.follow.camera.position)
+    this.sky.update(this.follow.camera.getWorldPosition(_eye))
     this.hud.update(this.score, this.multiplier, this.speed)
+    if (inVR) {
+      if (flying) {
+        const view = CAMERA_VIEWS[this.follow.view].label
+        this.vrHud.updateRun(dt, this.score, this.multiplier, this.speed, this.lives, this.ship.plane.lives, view)
+      }
+      this.vrHud.update(dt)
+    }
     this.renderer.render(this.scene, this.follow.camera)
   }
 
   // ---- menu
 
-  private browse(dt: number): void {
+  private browse(dt: number, inVR: boolean): void {
     const step = this.input.consumeStep()
     if (step !== 0) this.stepPlane(step)
-    if (this.input.consumeKey('Space', 'Enter')) {
+    if (this.input.consumeKey('Space', 'Enter', 'XRConfirm')) {
       this.startRun()
       return
     }
-    this.ship.showcase(this.time)
-    this.world.update(dt, GAME.menuSpeed)
-    this.scrolled = GAME.menuSpeed * dt
+    // In VR the player stands still, so the plane turns to show itself off instead of the camera circling it.
+    this.ship.showcase(this.time, inVR ? CAMERA.showcaseSwing : 0)
+    const speed = inVR ? GAME.vrMenuSpeed : GAME.menuSpeed
+    this.world.update(dt, speed)
+    this.scrolled = speed * dt
   }
 
   private readonly enterMenu = (): void => {
@@ -135,6 +169,7 @@ export class Game {
     this.menu.setPlane(this.ship.plane, this.planeIndex, PLANES.length)
     this.menu.setBest(this.best)
     this.menu.show()
+    this.vrHud.showMenu(this.ship.plane, this.planeIndex, PLANES.length, this.best)
     this.input.clearPresses()
   }
 
@@ -145,8 +180,10 @@ export class Game {
     this.ship.setPlane(plane)
     this.trails.reset(this.ship)
     this.menu.setPlane(plane, this.planeIndex, PLANES.length)
+    this.vrHud.showMenu(plane, this.planeIndex, PLANES.length, this.best)
     savePlaneIndex(this.planeIndex)
     this.audio.select()
+    this.input.pulse(0.25, 30)
   }
 
   // ---- run
@@ -163,11 +200,12 @@ export class Game {
     this.world.beginRun()
     this.ship.reset()
     this.trails.reset(this.ship)
-    this.follow.mode = 'chase'
+    this.follow.mode = 'run'
     this.menu.hide()
     this.hud.hideGameOver()
     this.hud.setLives(this.lives, this.ship.plane.lives)
     this.hud.setRunVisible(true, this.input.touched)
+    this.vrHud.showRun()
     this.audio.start()
     this.input.clearPresses()
   }
@@ -187,7 +225,10 @@ export class Game {
 
     this.streak += travelled
     const multiplier = Math.min(GAME.maxMultiplier, 1 + Math.floor(this.streak / GAME.multiplierDistance))
-    if (multiplier > this.multiplier) this.audio.multiplierUp()
+    if (multiplier > this.multiplier) {
+      this.audio.multiplierUp()
+      this.input.pulse(0.35, 50)
+    }
     this.multiplier = multiplier
     this.score += travelled * this.multiplier
 
@@ -206,8 +247,10 @@ export class Game {
     this.multiplier = 1
     this.hud.setLives(this.lives, this.ship.plane.lives)
     this.hud.flash()
+    this.vrHud.flash()
     this.follow.shake(1)
     this.audio.crash()
+    this.input.pulse(1, 160)
     if (this.lives > 0) {
       this.invulnerable = GAME.invulnerableTime
       return
@@ -219,14 +262,16 @@ export class Game {
     this.ship.object.visible = false
     const isNewBest = this.score > this.best
     this.commitBest()
+    this.lastRun = { score: this.score, best: this.best, isNewBest, distance: this.world.distance }
     this.audio.gameOver()
-    this.hud.showGameOver({ score: this.score, best: this.best, isNewBest, distance: this.world.distance })
+    this.hud.showGameOver(this.lastRun)
+    this.vrHud.showGameOver(this.lastRun)
     this.input.clearPresses()
   }
 
   private waitForRestart(dt: number): void {
     this.gameOverTime += dt
-    if (this.input.consumeKey('Escape')) {
+    if (this.input.consumeKey('Escape', 'XRBack')) {
       this.enterMenu()
       return
     }
@@ -245,7 +290,61 @@ export class Game {
     this.hud.setSound(this.audio.toggleMute())
   }
 
+  private readonly cycleCamera = (): void => {
+    const view = this.follow.cycleView()
+    this.hud.setCamera(CAMERA_VIEWS[view].label)
+    this.audio.select()
+  }
+
+  // ---- VR
+
+  /** Offer VR only when the browser reports a headset. WebXR only exists on secure (https) pages. */
+  private detectVR(): void {
+    const xr = navigator.xr
+    if (!xr) {
+      if (/OculusBrowser/i.test(navigator.userAgent) && !window.isSecureContext) this.menu.setVrStatus('needs-https')
+      return
+    }
+    xr.isSessionSupported('immersive-vr')
+      .then((supported) => {
+        if (supported) this.menu.setVrStatus('available')
+      })
+      .catch(() => undefined)
+  }
+
+  private readonly enterVR = (): void => {
+    const xr = navigator.xr
+    if (!xr || this.renderer.xr.isPresenting) return
+    // Requested straight from the click, before anything asynchronous, or the browser refuses.
+    xr.requestSession('immersive-vr', { optionalFeatures: ['layers'] })
+      .then((session) => this.renderer.xr.setSession(session))
+      .catch((error: unknown) => {
+        console.warn('VR session failed to start', error)
+        this.menu.setVrStatus('failed')
+      })
+  }
+
+  private readonly onXRStart = (): void => {
+    this.follow.setXR(true)
+    this.sun.setShadowMapSize(VR_SHADOW_MAP_SIZE)
+    this.vrHud.setVisible(true)
+    if (this.state === 'menu') this.vrHud.showMenu(this.ship.plane, this.planeIndex, PLANES.length, this.best)
+    else if (this.state === 'playing') this.vrHud.showRun()
+    else this.vrHud.showGameOver(this.lastRun)
+    this.input.clearPresses()
+  }
+
+  private readonly onXREnd = (): void => {
+    this.follow.setXR(false)
+    this.sun.setShadowMapSize(this.flatShadowMapSize)
+    this.vrHud.setVisible(false)
+    this.input.clearPresses()
+    this.resize()
+  }
+
   private readonly resize = (): void => {
+    // The headset owns the resolution while VR is running.
+    if (this.renderer.xr.isPresenting) return
     const width = window.innerWidth
     const height = window.innerHeight
     this.renderer.setSize(width, height)

@@ -8,7 +8,7 @@ pnpm dev        # http://localhost:5173
 pnpm build      # type-check + static build into dist/
 ```
 
-Controls: arrow keys or A / D to steer, or hold either half of the screen on a phone. Space or Enter to start, C to change the camera view, Esc for the menu, M to mute.
+Controls: arrow keys or A / D to steer, or hold either half of the screen on a phone. Space or Enter to start, C to change the camera view, P or Esc to pause (Q quits to the menu from there), M to mute. The game pauses by itself if you switch tabs.
 
 Camera views: far, chase, near and cockpit. The cockpit view puts you on the plane and rolls with it.
 
@@ -19,7 +19,7 @@ WebXR only runs on secure pages, so plain `http://` addresses will not offer VR.
 - **Deployed:** open the Vercel URL in the Quest browser and press PLAY IN VR.
 - **Local:** run `pnpm dev:vr`, then open `https://<your-computer-ip>:5173` in the Quest browser. Accept the certificate warning (Advanced, then Proceed) and press PLAY IN VR.
 
-VR controls: thumbstick steers, trigger or A / X starts, B / Y changes the camera view, grip on the game over screen goes back to the plane menu.
+VR controls: thumbstick steers, trigger or A / X starts, A / X pauses, B / Y changes the camera view, grip quits to the plane menu from the pause or game over screen. Pressing the Quest home button also pauses.
 
 For comfort in VR the horizon never rolls and the camera never shakes. Crashes buzz the controllers instead.
 

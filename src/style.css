@@ -101,7 +101,8 @@ body {
   }
 }
 
-.hud-gameover {
+.hud-gameover,
+.hud-pause {
   position: absolute;
   inset: 0;
   display: flex;
@@ -114,7 +115,10 @@ body {
   text-align: center;
 }
 
-.hud-gameover[hidden] {
+.hud-gameover[hidden],
+.hud-pause[hidden],
+.hud-button[hidden],
+.hud-pause-actions[hidden] {
   display: none;
 }
 
@@ -397,4 +401,15 @@ body {
 .menu-vr[hidden],
 .menu-vr-note[hidden] {
   display: none;
+}
+
+.hud-pause-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.hud-pause.counting .hud-gameover-title {
+  font-size: clamp(64px, 16vw, 140px);
+  letter-spacing: 0;
+  margin-right: 0;
 }

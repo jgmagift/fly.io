@@ -3,7 +3,7 @@ import { clamp } from './math'
 const LEFT_KEYS = ['ArrowLeft', 'KeyA']
 const RIGHT_KEYS = ['ArrowRight', 'KeyD']
 const CONFIRM_KEYS = ['Space', 'Enter']
-const GAME_KEYS = new Set([...LEFT_KEYS, ...RIGHT_KEYS, ...CONFIRM_KEYS, 'Escape', 'KeyM', 'KeyC'])
+const GAME_KEYS = new Set([...LEFT_KEYS, ...RIGHT_KEYS, ...CONFIRM_KEYS, 'Escape', 'KeyM', 'KeyC', 'KeyP', 'KeyQ'])
 
 /** Button slots in the standard WebXR controller layout, which Quest Touch controllers use. */
 const XR_BUTTON = { trigger: 0, grip: 1, aOrX: 4, bOrY: 5 } as const
@@ -96,8 +96,8 @@ export class Input {
 
   /**
    * Read VR controllers. Call once per frame with the active session, or null outside VR.
-   * Fresh button presses become one-shot presses: trigger or A / X confirms, B / Y changes camera,
-   * grip goes back, and a thumbstick flick steps through menus. Buttons already held when a
+   * Fresh button presses become one-shot presses: trigger or A / X confirms, A / X also pauses,
+   * B / Y changes camera, grip goes back, and a thumbstick flick steps through menus. Buttons already held when a
    * controller first appears are ignored, so the click that entered VR cannot also start a run.
    */
   pollXR(session: XRSession | null): void {
@@ -125,6 +125,7 @@ export class Input {
       }
       const fresh = (index: number) => buttons[index] === true && state.buttons[index] !== true
       if (fresh(XR_BUTTON.trigger) || fresh(XR_BUTTON.aOrX)) this.pressed.add('XRConfirm')
+      if (fresh(XR_BUTTON.aOrX)) this.pressed.add('XRPause')
       if (fresh(XR_BUTTON.bOrY)) this.pressed.add('XRCamera')
       if (fresh(XR_BUTTON.grip)) this.pressed.add('XRBack')
       state.buttons = buttons

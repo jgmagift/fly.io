@@ -26,6 +26,9 @@ export const GAME = {
   restartDelay: 0.8,
   /** Ship collision box half-depth. The half-width comes from the selected plane. */
   shipHalfDepth: 1.6,
+  /** Resuming from pause counts down 3, 2, 1, so the player has a moment to get ready. */
+  resumeSteps: 3,
+  resumeStepSeconds: 0.6,
 } as const
 
 export const CAMERA = {

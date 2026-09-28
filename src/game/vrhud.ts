@@ -114,6 +114,7 @@ export class VrHud {
   private flashLevel = 0
   private runKey = ''
   private sinceRunDraw = 0
+  private countdownStep = -1
 
   constructor() {
     // Low enough to clear the hovering plane in the menu, and the plane itself in every flight view.
@@ -178,7 +179,7 @@ export class VrHud {
       ctx.fill()
     }
     text(ctx, 'THUMBSTICK ◀ ▶ CHOOSE    TRIGGER  FLY', mid, 530, 24, { spacing: 2 })
-    text(ctx, 'B / Y  CHANGES THE CAMERA VIEW', mid, 580, 20, { color: FADED, spacing: 2 })
+    text(ctx, 'B / Y  CAMERA VIEW     A / X  PAUSE IN FLIGHT', mid, 580, 20, { color: FADED, spacing: 2 })
     this.board.commit()
   }
 
@@ -231,7 +232,7 @@ export class VrHud {
 
     text(ctx, 'SPEED', width - 44, 42, 20, { color: FADED, align: 'right', spacing: 4 })
     text(ctx, String(Math.round(speed)), width - 44, 94, 46, { align: 'right', bold: true })
-    text(ctx, `B / Y  CAMERA · ${view}`, width / 2, 148, 18, { color: FADED, spacing: 3 })
+    text(ctx, `A / X  PAUSE     B / Y  CAMERA · ${view}`, width / 2, 148, 18, { color: FADED, spacing: 3 })
     this.strip.commit()
   }
 
@@ -250,6 +251,32 @@ export class VrHud {
     })
     text(ctx, 'TRIGGER  FLY AGAIN', mid, 470, 30, { spacing: 4 })
     text(ctx, 'GRIP  CHANGE PLANE', mid, 530, 30, { color: FADED, spacing: 4 })
+    this.board.commit()
+  }
+
+  showPause(): void {
+    if (!this.visible) return
+    this.countdownStep = -1
+    this.board.mesh.visible = true
+    this.strip.mesh.visible = false
+    const ctx = this.board.begin()
+    const mid = this.board.width / 2
+    text(ctx, 'PAUSED', mid, 190, 80, { spacing: 20, bold: true })
+    text(ctx, 'TRIGGER  RESUME', mid, 400, 32, { spacing: 4 })
+    text(ctx, 'GRIP  QUIT TO MENU', mid, 470, 32, { color: FADED, spacing: 4 })
+    this.board.commit()
+  }
+
+  /** Big 3, 2, 1 before play resumes. Only redraws when the number changes. */
+  showCountdown(step: number): void {
+    if (!this.visible || step === this.countdownStep) return
+    this.countdownStep = step
+    this.board.mesh.visible = true
+    this.strip.mesh.visible = false
+    const ctx = this.board.begin()
+    const mid = this.board.width / 2
+    text(ctx, String(step), mid, 290, 240, { bold: true })
+    text(ctx, 'GET READY', mid, 520, 30, { color: FADED, spacing: 8 })
     this.board.commit()
   }
 

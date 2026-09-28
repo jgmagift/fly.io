@@ -16,7 +16,7 @@ import { Trails } from './trail'
 import { VrHud } from './vrhud'
 import { World } from './world'
 
-type GameState = 'menu' | 'playing' | 'gameover'
+type GameState = 'menu' | 'playing' | 'paused' | 'gameover'
 
 /** Shadow map size in VR, where two eyes at 72 to 120 frames a second leave less headroom. */
 const VR_SHADOW_MAP_SIZE = 2048
@@ -53,6 +53,8 @@ export class Game {
   /** Seconds of crash immunity left. */
   private invulnerable = 0
   private gameOverTime = 0
+  /** Seconds left in the resume countdown, or 0 while waiting on the pause screen. */
+  private resumeTimer = 0
   private lastRun: RunSummary = { score: 0, best: 0, isNewBest: false, distance: 0 }
   /** Distance the world scrolled this frame. The trails stream back by this much. */
   private scrolled = 0
@@ -94,6 +96,9 @@ export class Game {
       onMenu: this.enterMenu,
       onToggleSound: this.toggleSound,
       onCycleCamera: this.cycleCamera,
+      onPause: this.pause,
+      onResume: this.resume,
+      onQuit: this.enterMenu,
     })
     this.hud.setSound(this.audio.muted)
     this.hud.setCamera(CAMERA_VIEWS[this.follow.view].label)
@@ -101,6 +106,13 @@ export class Game {
     this.loop = new GameLoop(this.frame)
 
     window.addEventListener('resize', this.resize)
+    // Pause by itself when the player looks away: another tab, another app, or a click outside the window.
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden && !this.renderer.xr.isPresenting) this.pause()
+    })
+    window.addEventListener('blur', () => {
+      if (!this.renderer.xr.isPresenting) this.pause()
+    })
     this.resize()
     this.enterMenu()
     this.detectVR()
@@ -120,13 +132,15 @@ export class Game {
 
     if (this.state === 'menu') this.browse(dt, inVR)
     else if (this.state === 'playing') this.play(dt)
+    else if (this.state === 'paused') this.whilePaused(dt)
     else this.waitForRestart(dt)
 
     const flying = this.state === 'playing'
     const speedRatio = (this.speed - SHIP.forwardSpeed) / (SHIP.maxSpeed - SHIP.forwardSpeed)
-    this.audio.update(flying, this.state === 'gameover', Math.max(0, speedRatio), flying ? this.input.steer : 0)
+    this.audio.update(flying, this.state === 'gameover' || this.state === 'paused', Math.max(0, speedRatio), flying ? this.input.steer : 0)
 
-    this.trails.update(this.ship, this.scrolled)
+    // Frozen while paused; updating with no scroll would reel the trails in.
+    if (this.state !== 'paused') this.trails.update(this.ship, this.scrolled)
     this.sun.update(this.ship.x)
     this.follow.update(dt, this.time, this.ship)
     this.sky.update(this.follow.camera.getWorldPosition(_eye))
@@ -165,6 +179,8 @@ export class Game {
     this.trails.reset(this.ship)
     this.follow.mode = 'showcase'
     this.hud.hideGameOver()
+    this.hud.hidePause()
+    this.hud.setPauseButton(false)
     this.hud.setRunVisible(false, this.input.touched)
     this.menu.setPlane(this.ship.plane, this.planeIndex, PLANES.length)
     this.menu.setBest(this.best)
@@ -196,6 +212,7 @@ export class Game {
     this.streak = 0
     this.multiplier = 1
     this.invulnerable = 0
+    this.resumeTimer = 0
     this.speed = SHIP.forwardSpeed
     this.world.beginRun()
     this.ship.reset()
@@ -203,6 +220,8 @@ export class Game {
     this.follow.mode = 'run'
     this.menu.hide()
     this.hud.hideGameOver()
+    this.hud.hidePause()
+    this.hud.setPauseButton(true)
     this.hud.setLives(this.lives, this.ship.plane.lives)
     this.hud.setRunVisible(true, this.input.touched)
     this.vrHud.showRun()
@@ -211,8 +230,8 @@ export class Game {
   }
 
   private play(dt: number): void {
-    if (this.input.consumeKey('Escape')) {
-      this.enterMenu()
+    if (this.input.consumeKey('Escape', 'KeyP', 'XRPause')) {
+      this.pause()
       return
     }
     if (this.input.touched) this.hud.hideHint()
@@ -260,6 +279,7 @@ export class Game {
     this.speed = 0
     this.gameOverTime = 0
     this.ship.object.visible = false
+    this.hud.setPauseButton(false)
     const isNewBest = this.score > this.best
     this.commitBest()
     this.lastRun = { score: this.score, best: this.best, isNewBest, distance: this.world.distance }
@@ -278,6 +298,57 @@ export class Game {
     // Always consume, so a press during the delay is discarded instead of queued.
     const pressed = this.input.consumeConfirm()
     if (pressed && this.gameOverTime >= GAME.restartDelay) this.startRun()
+  }
+
+  // ---- pause
+
+  private readonly pause = (): void => {
+    if (this.state !== 'playing') return
+    this.state = 'paused'
+    this.resumeTimer = 0
+    // Never freeze on the invisible half of the post-crash blink.
+    this.ship.object.visible = true
+    this.hud.showPause()
+    this.hud.setPauseButton(false)
+    this.vrHud.showPause()
+    this.input.clearPresses()
+  }
+
+  /** Start the 3, 2, 1 countdown back into the run. */
+  private readonly resume = (): void => {
+    if (this.state !== 'paused' || this.resumeTimer > 0) return
+    this.resumeTimer = GAME.resumeSteps * GAME.resumeStepSeconds
+    this.input.clearPresses()
+  }
+
+  private whilePaused(dt: number): void {
+    if (this.resumeTimer > 0) {
+      // Pausing again during the countdown goes back to the pause screen.
+      if (this.input.consumeKey('Escape', 'KeyP', 'XRPause')) {
+        this.state = 'playing'
+        this.pause()
+        return
+      }
+      this.resumeTimer -= dt
+      if (this.resumeTimer <= 0) {
+        this.resumeTimer = 0
+        this.state = 'playing'
+        this.hud.hidePause()
+        this.hud.setPauseButton(true)
+        this.vrHud.showRun()
+        this.input.clearPresses()
+        return
+      }
+      const step = Math.ceil(this.resumeTimer / GAME.resumeStepSeconds)
+      this.hud.showCountdown(step)
+      this.vrHud.showCountdown(step)
+      return
+    }
+    if (this.input.consumeKey('KeyQ', 'XRBack')) {
+      this.enterMenu()
+      return
+    }
+    if (this.input.consumeKey('Escape', 'KeyP') || this.input.consumeConfirm()) this.resume()
   }
 
   private commitBest(): void {
@@ -325,16 +396,26 @@ export class Game {
   }
 
   private readonly onXRStart = (): void => {
+    // The Quest home button or taking the headset off hides the session: pause the run.
+    this.renderer.xr.getSession()?.addEventListener('visibilitychange', this.onXRVisibility)
     this.follow.setXR(true)
     this.sun.setShadowMapSize(VR_SHADOW_MAP_SIZE)
     this.vrHud.setVisible(true)
     if (this.state === 'menu') this.vrHud.showMenu(this.ship.plane, this.planeIndex, PLANES.length, this.best)
     else if (this.state === 'playing') this.vrHud.showRun()
+    else if (this.state === 'paused') this.vrHud.showPause()
     else this.vrHud.showGameOver(this.lastRun)
     this.input.clearPresses()
   }
 
+  private readonly onXRVisibility = (): void => {
+    const session = this.renderer.xr.getSession()
+    if (session && session.visibilityState !== 'visible') this.pause()
+  }
+
   private readonly onXREnd = (): void => {
+    // Leaving VR mid-run pauses it rather than letting the plane fly on unattended.
+    this.pause()
     this.follow.setXR(false)
     this.sun.setShadowMapSize(this.flatShadowMapSize)
     this.vrHud.setVisible(false)

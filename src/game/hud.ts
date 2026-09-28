@@ -4,6 +4,9 @@ interface HudHandlers {
   onMenu: () => void
   onToggleSound: () => void
   onCycleCamera: () => void
+  onPause: () => void
+  onResume: () => void
+  onQuit: () => void
 }
 
 export interface RunSummary {
@@ -27,6 +30,12 @@ export class Hud {
   private readonly bestEl: HTMLElement
   private readonly soundEl: HTMLElement
   private readonly camEl: HTMLElement
+  private readonly pauseButtonEl: HTMLElement
+  private readonly pauseEl: HTMLElement
+  private readonly pauseTitleEl: HTMLElement
+  private readonly pauseActionsEl: HTMLElement
+  private readonly pauseHintEl: HTMLElement
+  private countdownStep = -1
   private readonly showTouchHint: boolean
   private lastScore = -1
   private lastMultiplier = -1
@@ -45,11 +54,20 @@ export class Hud {
         <div class="hud-row"><span class="hud-label">LIVES</span><span class="hud-lives" data-lives></span></div>
       </div>
       <div class="hud-buttons">
+        <button class="hud-button" data-pause-button hidden>PAUSE</button>
         <button class="hud-button" data-cam></button>
         <button class="hud-button" data-sound></button>
       </div>
       <div class="hud-hint" data-hint hidden>hold the left or right side of the screen to steer</div>
       <div class="hud-flash" data-flash></div>
+      <div class="hud-pause" data-pause hidden>
+        <div class="hud-gameover-title" data-pause-title>PAUSED</div>
+        <div class="hud-pause-actions" data-pause-actions>
+          <button class="hud-menu-button" data-resume>resume</button>
+          <button class="hud-menu-button" data-quit>quit to menu</button>
+        </div>
+        <div class="hud-gameover-hint" data-pause-hint>tap, space or P to resume &middot; Q to quit</div>
+      </div>
       <div class="hud-gameover" data-gameover hidden>
         <div class="hud-gameover-title">GAME OVER</div>
         <div class="hud-gameover-score" data-final></div>
@@ -71,6 +89,17 @@ export class Hud {
     this.bestEl = find('[data-best]')
     this.soundEl = find('[data-sound]')
     this.camEl = find('[data-cam]')
+    this.pauseButtonEl = find('[data-pause-button]')
+    this.pauseEl = find('[data-pause]')
+    this.pauseTitleEl = find('[data-pause-title]')
+    this.pauseActionsEl = find('[data-pause-actions]')
+    this.pauseHintEl = find('[data-pause-hint]')
+    find('[data-resume]').addEventListener('click', handlers.onResume)
+    find('[data-quit]').addEventListener('click', handlers.onQuit)
+    this.pauseButtonEl.addEventListener('click', () => {
+      handlers.onPause()
+      this.pauseButtonEl.blur()
+    })
     find('[data-menu]').addEventListener('click', handlers.onMenu)
     this.soundEl.addEventListener('click', () => {
       handlers.onToggleSound()
@@ -90,6 +119,35 @@ export class Hud {
 
   setCamera(label: string): void {
     this.camEl.textContent = `CAM \u00b7 ${label}`
+  }
+
+  /** The PAUSE button only shows during a run. */
+  setPauseButton(visible: boolean): void {
+    this.pauseButtonEl.hidden = !visible
+  }
+
+  showPause(): void {
+    this.countdownStep = -1
+    this.pauseEl.hidden = false
+    this.pauseEl.classList.remove('counting')
+    this.pauseTitleEl.textContent = 'PAUSED'
+    this.pauseActionsEl.hidden = false
+    this.pauseHintEl.hidden = false
+  }
+
+  /** Big 3, 2, 1 before play resumes. Only touches the DOM when the number changes. */
+  showCountdown(step: number): void {
+    if (step === this.countdownStep) return
+    this.countdownStep = step
+    this.pauseEl.hidden = false
+    this.pauseEl.classList.add('counting')
+    this.pauseTitleEl.textContent = String(step)
+    this.pauseActionsEl.hidden = true
+    this.pauseHintEl.hidden = true
+  }
+
+  hidePause(): void {
+    this.pauseEl.hidden = true
   }
 
   setSound(muted: boolean): void {

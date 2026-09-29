@@ -1,5 +1,6 @@
 import { BackSide, Color, Mesh, ShaderMaterial, SphereGeometry, Vector3 } from 'three'
-import { PALETTE, SKY } from './constants'
+import { SKY } from './constants'
+import type { WorldTheme } from './worlds'
 
 const vertexShader = /* glsl */ `
   varying vec3 vWorldDir;
@@ -25,14 +26,14 @@ const fragmentShader = /* glsl */ `
     vec3 dir = normalize(vWorldDir);
     float y = dir.y;
 
-    // Four-stop vertical gradient, warmest at the horizon, dusk blue overhead.
+    // Four-stop vertical gradient from the horizon up to the zenith.
     vec3 color = mix(horizonColor, lowerColor, smoothstep(0.0, 0.12, y));
     color = mix(color, upperColor, smoothstep(0.12, 0.38, y));
     color = mix(color, zenithColor, smoothstep(0.38, 0.9, y));
     // Below the horizon fade to the fog colour so the ground's far edge never shows a seam.
     color = mix(color, horizonColor, smoothstep(0.0, 0.15, -y));
 
-    // Warm glow around the sun, then the disc itself.
+    // Glow around the sun, then the disc itself.
     float toSun = max(dot(dir, sunDirection), 0.0);
     color = mix(color, glowColor, pow(toSun, 8.0) * 0.6 + pow(toSun, 2.0) * 0.12);
     float disc = smoothstep(sunDiscCos - 0.0012, sunDiscCos + 0.0004, dot(dir, sunDirection));
@@ -47,17 +48,24 @@ const fragmentShader = /* glsl */ `
 export class Sky {
   readonly mesh: Mesh
   private readonly sunDirection = new Vector3()
+  private readonly colors = {
+    horizonColor: new Color(),
+    lowerColor: new Color(),
+    upperColor: new Color(),
+    zenithColor: new Color(),
+    sunColor: new Color(),
+    glowColor: new Color(),
+  }
 
-  constructor(sunDirection: Vector3) {
-    this.sunDirection.copy(sunDirection).normalize()
+  constructor(theme: WorldTheme) {
     const material = new ShaderMaterial({
       uniforms: {
-        horizonColor: { value: new Color(PALETTE.skyHorizon) },
-        lowerColor: { value: new Color(PALETTE.skyLower) },
-        upperColor: { value: new Color(PALETTE.skyUpper) },
-        zenithColor: { value: new Color(PALETTE.skyZenith) },
-        sunColor: { value: new Color(PALETTE.sunDisc) },
-        glowColor: { value: new Color(PALETTE.sunGlow) },
+        horizonColor: { value: this.colors.horizonColor },
+        lowerColor: { value: this.colors.lowerColor },
+        upperColor: { value: this.colors.upperColor },
+        zenithColor: { value: this.colors.zenithColor },
+        sunColor: { value: this.colors.sunColor },
+        glowColor: { value: this.colors.glowColor },
         sunDirection: { value: this.sunDirection },
         sunDiscCos: { value: Math.cos((SKY.sunDiscDegrees * Math.PI) / 180) },
       },
@@ -70,6 +78,19 @@ export class Sky {
     this.mesh = new Mesh(new SphereGeometry(SKY.radius, 32, 16), material)
     this.mesh.frustumCulled = false
     this.mesh.renderOrder = -1
+    this.setTheme(theme)
+  }
+
+  /** Recolour the dome and move the sun. The uniforms hold these objects, so they update in place. */
+  setTheme(theme: WorldTheme): void {
+    const { palette } = theme
+    this.colors.horizonColor.setHex(palette.skyHorizon)
+    this.colors.lowerColor.setHex(palette.skyLower)
+    this.colors.upperColor.setHex(palette.skyUpper)
+    this.colors.zenithColor.setHex(palette.skyZenith)
+    this.colors.sunColor.setHex(palette.sunDisc)
+    this.colors.glowColor.setHex(palette.sunGlow)
+    this.sunDirection.set(...theme.sunDirection).normalize()
   }
 
   /** Keep the dome centred on the camera so the gradient is a function of view direction only. */

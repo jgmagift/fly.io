@@ -1,5 +1,6 @@
 import { DirectionalLight, HemisphereLight, Vector3 } from 'three'
-import { PALETTE, WORLD } from './constants'
+import { WORLD } from './constants'
+import type { WorldTheme } from './worlds'
 
 /** How much of the world around the ship receives shadows: x left/right, y up, z ahead (negative) and behind. */
 const SHADOW_REGION = {
@@ -15,20 +16,31 @@ const _right = new Vector3()
 const _up = new Vector3()
 const WORLD_UP = new Vector3(0, 1, 0)
 
-/** A low sun ahead and to the left, for the long shadows this genre is known for. */
+/** The sun and the sky's ambient light. Each world places and colours them; dusk sits low for long shadows. */
 export class Sun {
-  readonly light = new DirectionalLight(PALETTE.sunLight, 2.8)
-  readonly ambient = new HemisphereLight(PALETTE.hemiSky, PALETTE.hemiGround, 1.3)
+  readonly light = new DirectionalLight()
+  readonly ambient = new HemisphereLight()
   /** Unit vector pointing from the ship toward the sun. */
-  readonly direction = new Vector3(-0.33, 0.19, -0.92).normalize()
+  readonly direction = new Vector3()
   /** Light placement distance from the ship. Larger than the shadow region so nothing sits behind the light. */
   private readonly distance = 450
 
-  constructor(shadowMapSize: number) {
+  constructor(shadowMapSize: number, theme: WorldTheme) {
     this.light.castShadow = true
     this.light.shadow.mapSize.set(shadowMapSize, shadowMapSize)
     this.light.shadow.bias = -0.0003
     this.light.shadow.normalBias = 0.05
+    this.setTheme(theme)
+  }
+
+  setTheme(theme: WorldTheme): void {
+    const { palette } = theme
+    this.light.color.setHex(palette.sunLight)
+    this.light.intensity = theme.sunIntensity
+    this.ambient.color.setHex(palette.hemiSky)
+    this.ambient.groundColor.setHex(palette.hemiGround)
+    this.ambient.intensity = theme.ambientIntensity
+    this.direction.set(...theme.sunDirection).normalize()
     this.fitShadowFrustum()
   }
 

@@ -12,6 +12,7 @@ import {
 import type { RunSummary } from './hud'
 import type { PlaneSpec } from './planes'
 import { formatScore } from './score'
+import type { WorldTheme } from './worlds'
 
 const FONT = 'ui-monospace, "SF Mono", Menlo, "Roboto Mono", "Droid Sans Mono", monospace'
 const CREAM = '#fff4d6'
@@ -195,7 +196,7 @@ export class VrHud {
     this.setComfort(0)
   }
 
-  showMenu(plane: PlaneSpec, index: number, count: number, best: number): void {
+  showMenu(plane: PlaneSpec, index: number, count: number, best: number, world: WorldTheme): void {
     if (!this.visible) return
     this.board.mesh.visible = true
     this.strip.mesh.visible = false
@@ -203,7 +204,8 @@ export class VrHud {
     const { width } = this.board
     const mid = width / 2
     text(ctx, 'FLY.IO', mid, 64, 60, { spacing: 16, bold: true })
-    if (best > 0) text(ctx, `BEST ${formatScore(best)}`, mid, 112, 24, { color: GOLD, spacing: 4 })
+    if (best > 0) text(ctx, `BEST ${formatScore(best)}`, mid, 108, 24, { color: GOLD, spacing: 4 })
+    text(ctx, `▲ ▼  WORLD · ${world.name}`, mid, 148, 22, { color: FADED, spacing: 4 })
     text(ctx, '◀', 80, 300, 56, { color: FADED })
     text(ctx, '▶', width - 80, 300, 56, { color: FADED })
     text(ctx, plane.name, mid, 190, 56, { spacing: 14, bold: true })
@@ -224,7 +226,7 @@ export class VrHud {
       ctx.arc(firstDot + i * dotGap, 440, 6, 0, Math.PI * 2)
       ctx.fill()
     }
-    text(ctx, 'THUMBSTICK ◀ ▶ CHOOSE    TRIGGER  FLY', mid, 530, 24, { spacing: 2 })
+    text(ctx, 'THUMBSTICK ◀ ▶ PLANE   ▲ ▼ WORLD    TRIGGER  FLY', mid, 530, 22, { spacing: 2 })
     text(ctx, 'B / Y  CAMERA VIEW     A / X  PAUSE IN FLIGHT', mid, 580, 20, { color: FADED, spacing: 2 })
     this.board.commit()
   }

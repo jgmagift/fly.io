@@ -1,6 +1,7 @@
 import {
   BoxGeometry,
   BufferAttribute,
+  Color,
   ConeGeometry,
   Group,
   InstancedMesh,
@@ -11,34 +12,45 @@ import {
   Quaternion,
   Vector3,
 } from 'three'
-import { PALETTE, WORLD } from './constants'
+import { WORLD } from './constants'
 import { mulberry32 } from './noise'
+import type { Footprint, Piece, Shape } from './scenery'
 import { terrainHeight } from './terrain'
+import type { WorldTheme } from './worlds'
 
-export type ObstacleKind = 'pillar' | 'block' | 'wall' | 'pyramid'
+/** A solid thing in chunk-local space: its collision box plus the instance slots that draw it. */
+export interface Obstacle extends Footprint {
+  pieces: PieceRef[]
+}
 
-/** An axis-aligned obstacle in chunk-local space, footprint centred on (x, z) and resting on the ground. */
-export interface Obstacle {
-  kind: ObstacleKind
-  x: number
-  z: number
-  width: number
-  height: number
-  depth: number
-  /** Instance slot in the chunk mesh, so a smashed obstacle can be hidden. */
+interface PieceRef {
+  shape: Shape
   slot: number
 }
+
+const SHAPES: readonly Shape[] = ['box', 'pyramid', 'cloud']
 
 const unitBox = new BoxGeometry(1, 1, 1).translate(0, 0.5, 0)
 // A four-sided cone, rotated so its square base is axis-aligned with side 1.
 const unitPyramid = new ConeGeometry(Math.SQRT1_2, 1, 4).rotateY(Math.PI / 4).translate(0, 0.5, 0)
+const UP = new Vector3(0, 1, 0)
 
 const _position = new Vector3()
 const _scale = new Vector3()
 const _rotation = new Quaternion()
 const _matrix = new Matrix4()
+const _color = new Color()
 
-/** One slice of landscape plus its obstacles. Chunks are recycled and regenerated, never destroyed. */
+interface ChunkMaterials {
+  ground: MeshStandardMaterial
+  piece: MeshStandardMaterial
+  cloud: MeshStandardMaterial
+}
+
+/**
+ * One slice of landscape plus everything standing on it. Chunks are recycled and regenerated, never destroyed.
+ * All the pieces of every world are boxes and pyramids in a few instanced meshes, coloured per instance.
+ */
 class Chunk {
   readonly group = new Group()
   /** Obstacles in chunk-local space, for collision checks. */
@@ -46,113 +58,140 @@ class Chunk {
   /** Absolute chunk number since the page loaded. Drives the terrain, which never repeats or resets. */
   index = -1
   private readonly ground: Mesh
-  private readonly boxes: InstancedMesh
-  private readonly pyramids: InstancedMesh
+  private readonly meshes: Record<Shape, InstancedMesh>
+  private readonly counts: Record<Shape, number> = { box: 0, pyramid: 0, cloud: 0 }
 
-  constructor(groundMaterial: MeshStandardMaterial, obstacleMaterial: MeshStandardMaterial) {
+  constructor(materials: ChunkMaterials) {
     const geometry = new PlaneGeometry(
       WORLD.chunkWidth,
       WORLD.chunkLength,
       WORLD.groundSegmentsX,
       WORLD.groundSegmentsZ,
     ).rotateX(-Math.PI / 2)
-    this.ground = new Mesh(geometry, groundMaterial)
+    geometry.setAttribute('color', new BufferAttribute(new Float32Array(geometry.getAttribute('position').count * 3), 3))
+    this.ground = new Mesh(geometry, materials.ground)
     this.ground.receiveShadow = true
 
-    this.boxes = new InstancedMesh(unitBox, obstacleMaterial, WORLD.maxBoxesPerChunk)
-    this.pyramids = new InstancedMesh(unitPyramid, obstacleMaterial, WORLD.maxPyramidsPerChunk)
-    for (const mesh of [this.boxes, this.pyramids]) {
+    this.meshes = {
+      box: new InstancedMesh(unitBox, materials.piece, WORLD.boxCapacity),
+      pyramid: new InstancedMesh(unitPyramid, materials.piece, WORLD.pyramidCapacity),
+      cloud: new InstancedMesh(unitBox, materials.cloud, WORLD.cloudCapacity),
+    }
+    for (const mesh of Object.values(this.meshes)) {
       mesh.castShadow = true
       mesh.receiveShadow = true
+      // Allocate the colour buffer now, so the first coloured piece does not trigger a shader rebuild mid-game.
+      mesh.setColorAt(0, _color.setHex(0xffffff))
+      mesh.count = 0
     }
-    this.group.add(this.ground, this.boxes, this.pyramids)
+    // Nothing flies above the clouds, so they never need a shadow on them.
+    this.meshes.cloud.receiveShadow = false
+    this.group.add(this.ground, ...Object.values(this.meshes))
   }
 
-  /** Shape the ground for absolute chunk number `index`. */
-  sculpt(index: number): void {
+  /** Shape and colour the ground for absolute chunk number `index`. */
+  sculpt(index: number, theme: WorldTheme): void {
     this.index = index
     const position = this.ground.geometry.getAttribute('position') as BufferAttribute
+    const color = this.ground.geometry.getAttribute('color') as BufferAttribute
     // Local z runs from +half (near edge) to -half (far edge); world z must grow with distance.
     const baseZ = index * WORLD.chunkLength
     for (let i = 0; i < position.count; i++) {
-      position.setY(i, terrainHeight(position.getX(i), baseZ - position.getZ(i)))
+      const x = position.getX(i)
+      const worldZ = baseZ - position.getZ(i)
+      position.setY(i, terrainHeight(x, worldZ, theme.terrain))
+      theme.groundColor(x, worldZ, _color)
+      color.setXYZ(i, _color.r, _color.g, _color.b)
     }
     position.needsUpdate = true
+    color.needsUpdate = true
     this.ground.geometry.computeBoundingSphere()
   }
 
-  /** Replace the obstacles with up to `target` new ones. The same `layoutSeed` always gives the same layout. */
-  placeObstacles(target: number, layoutSeed: number): void {
-    const random = mulberry32(WORLD.seed * 7919 + layoutSeed * 104729)
+  /**
+   * Lay the chunk out afresh: up to `target` obstacles, then the decoration. The same `layoutSeed` always
+   * gives the same obstacles, and the decoration only ever depends on the chunk number, so re-laying a
+   * chunk that is in view changes nothing but the obstacles.
+   */
+  layout(theme: WorldTheme, target: number, layoutSeed: number): void {
+    for (const shape of SHAPES) this.counts[shape] = 0
     this.obstacles.length = 0
-    let boxCount = 0
-    let pyramidCount = 0
 
+    const random = mulberry32(WORLD.seed * 7919 + layoutSeed * 104729)
     for (let attempt = 0; attempt < target * 6 && this.obstacles.length < target; attempt++) {
-      const candidate = randomObstacle(random)
-      if (this.obstacles.some((other) => overlaps(candidate, other))) continue
-      if (candidate.kind === 'pyramid') {
-        if (pyramidCount >= WORLD.maxPyramidsPerChunk) continue
-        candidate.slot = pyramidCount++
-        setInstance(this.pyramids, candidate)
-      } else {
-        if (boxCount >= WORLD.maxBoxesPerChunk) continue
-        candidate.slot = boxCount++
-        setInstance(this.boxes, candidate)
-      }
-      this.obstacles.push(candidate)
+      const { footprint, pieces } = theme.scenery.obstacle(random)
+      if (this.obstacles.some((other) => overlaps(footprint, other))) continue
+      const refs = this.write(pieces)
+      if (!refs) break
+      this.obstacles.push({ ...footprint, pieces: refs })
     }
 
-    this.boxes.count = boxCount
-    this.pyramids.count = pyramidCount
-    for (const mesh of [this.boxes, this.pyramids]) {
+    const baseZ = this.index * WORLD.chunkLength
+    const groundAt = (x: number, z: number) => terrainHeight(x, baseZ - z, theme.terrain)
+    for (const thing of theme.scenery.decor(mulberry32(WORLD.seed * 31 + this.index * 7907), groundAt)) {
+      if (thing.some((piece) => this.obstacles.some((obstacle) => covers(obstacle, piece)))) continue
+      if (!this.write(thing)) break
+    }
+
+    for (const shape of SHAPES) {
+      const mesh = this.meshes[shape]
+      mesh.count = this.counts[shape]
       mesh.instanceMatrix.needsUpdate = true
+      mesh.instanceColor!.needsUpdate = true
       // Frustum culling uses this sphere; without it the mesh is culled as if it were a unit shape at the origin.
       mesh.computeBoundingSphere()
     }
   }
 
-  /** Remove an obstacle the ship crashed through: hide its instance and drop it from collision. */
+  /** Remove an obstacle the ship crashed through: hide its pieces and drop it from collision. */
   smash(obstacle: Obstacle): void {
-    const mesh = obstacle.kind === 'pyramid' ? this.pyramids : this.boxes
-    mesh.setMatrixAt(obstacle.slot, _matrix.makeScale(0, 0, 0))
-    mesh.instanceMatrix.needsUpdate = true
+    for (const { shape, slot } of obstacle.pieces) {
+      const mesh = this.meshes[shape]
+      mesh.setMatrixAt(slot, _matrix.makeScale(0, 0, 0))
+      mesh.instanceMatrix.needsUpdate = true
+    }
     this.obstacles.splice(this.obstacles.indexOf(obstacle), 1)
+  }
+
+  /** Write a whole thing into the instance buffers, or nothing at all if it would not fit. */
+  private write(pieces: Piece[]): PieceRef[] | null {
+    for (const shape of SHAPES) {
+      const needed = pieces.reduce((n, piece) => n + (piece.shape === shape ? 1 : 0), 0)
+      if (this.counts[shape] + needed > this.meshes[shape].instanceMatrix.count) return null
+    }
+    return pieces.map((piece) => {
+      const mesh = this.meshes[piece.shape]
+      const slot = this.counts[piece.shape]++
+      _position.set(piece.x, piece.y, piece.z)
+      _scale.set(piece.w, piece.h, piece.d)
+      _rotation.setFromAxisAngle(UP, piece.yaw ?? 0)
+      mesh.setMatrixAt(slot, _matrix.compose(_position, _rotation, _scale))
+      mesh.setColorAt(slot, _color.setHex(piece.color))
+      return { shape: piece.shape, slot }
+    })
   }
 }
 
 /** Obstacles for the chunk `runIndex` chunks into a run. Chunks at or behind the start are empty. */
 function obstacleCountFor(runIndex: number): number {
   if (runIndex < WORLD.calmChunks) return 0
-  const max = WORLD.maxBoxesPerChunk + WORLD.maxPyramidsPerChunk
-  return Math.min(max, 4 + Math.floor((runIndex - WORLD.calmChunks) * 0.8))
+  return Math.min(WORLD.maxObstaclesPerChunk, 4 + Math.floor((runIndex - WORLD.calmChunks) * 0.8))
 }
 
-function randomObstacle(random: () => number): Obstacle {
-  const range = (min: number, max: number) => min + random() * (max - min)
-  const margin = 10
-  const x = range(-WORLD.playHalfWidth, WORLD.playHalfWidth)
-  const z = range(-WORLD.chunkLength / 2 + margin, WORLD.chunkLength / 2 - margin)
-  const roll = random()
-  if (roll < 0.35) return { kind: 'pillar', x, z, width: range(1, 3), height: range(6, 22), depth: range(1, 3), slot: -1 }
-  if (roll < 0.6) return { kind: 'block', x, z, width: range(4, 12), height: range(3, 9), depth: range(4, 12), slot: -1 }
-  if (roll < 0.8) return { kind: 'wall', x, z, width: range(18, 50), height: range(4, 12), depth: range(1.5, 3), slot: -1 }
-  const side = range(6, 18)
-  return { kind: 'pyramid', x, z, width: side, height: range(6, 20), depth: side, slot: -1 }
-}
-
-function overlaps(a: Obstacle, b: Obstacle): boolean {
+function overlaps(a: Footprint, b: Footprint): boolean {
   const gap = WORLD.obstacleGap
   return (
     Math.abs(a.x - b.x) < (a.width + b.width) / 2 + gap && Math.abs(a.z - b.z) < (a.depth + b.depth) / 2 + gap
   )
 }
 
-function setInstance(mesh: InstancedMesh, obstacle: Obstacle): void {
-  _position.set(obstacle.x, 0, obstacle.z)
-  _scale.set(obstacle.width, obstacle.height, obstacle.depth)
-  _matrix.compose(_position, _rotation, _scale)
-  mesh.setMatrixAt(obstacle.slot, _matrix)
+/** True if the piece would stand inside the obstacle's box. Things floating above it are fine. */
+function covers(obstacle: Footprint, piece: Piece): boolean {
+  return (
+    piece.y < obstacle.height &&
+    Math.abs(piece.x - obstacle.x) < (obstacle.width + piece.w) / 2 &&
+    Math.abs(piece.z - obstacle.z) < (obstacle.depth + piece.d) / 2
+  )
 }
 
 /**
@@ -164,23 +203,38 @@ export class World {
   readonly group = new Group()
   /** Distance flown in the current run, in world units. */
   distance = 0
+  private theme: WorldTheme
   private readonly chunks: Chunk[] = []
   private nextIndex = 0
   private calm = true
   /** Absolute index of the chunk the current run started in. */
   private runStart = 0
 
-  constructor() {
-    const groundMaterial = new MeshStandardMaterial({ color: PALETTE.ground, flatShading: true, roughness: 1 })
-    const obstacleMaterial = new MeshStandardMaterial({ color: PALETTE.obstacle, flatShading: true, roughness: 0.85 })
+  constructor(theme: WorldTheme) {
+    this.theme = theme
+    const materials: ChunkMaterials = {
+      ground: new MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 1 }),
+      piece: new MeshStandardMaterial({ flatShading: true, roughness: 0.85 }),
+      // Partly self-lit: a cloud scatters light, so its shaded sides and underside stay bright.
+      cloud: new MeshStandardMaterial({ flatShading: true, roughness: 1, emissive: 0xffffff, emissiveIntensity: 0.38 }),
+    }
     for (let i = 0; i < WORLD.chunkCount; i++) {
-      const chunk = new Chunk(groundMaterial, obstacleMaterial)
+      const chunk = new Chunk(materials)
       // First chunk sits under the ship, the rest extend ahead down -z.
       chunk.group.position.z = -i * WORLD.chunkLength
-      chunk.sculpt(this.nextIndex++)
+      chunk.sculpt(this.nextIndex++, theme)
       this.populate(chunk)
       this.chunks.push(chunk)
       this.group.add(chunk.group)
+    }
+  }
+
+  /** Rebuild every chunk in place for another world. The landscape keeps its position and chunk numbers. */
+  setTheme(theme: WorldTheme): void {
+    this.theme = theme
+    for (const chunk of this.chunks) {
+      chunk.sculpt(chunk.index, theme)
+      this.populate(chunk)
     }
   }
 
@@ -215,7 +269,7 @@ export class World {
       const farEdge = chunk.group.position.z + offset - WORLD.chunkLength / 2
       if (farEdge > WORLD.recycleBehind) {
         chunk.group.position.z -= loopLength
-        chunk.sculpt(this.nextIndex++)
+        chunk.sculpt(this.nextIndex++, this.theme)
         this.populate(chunk)
       }
     }
@@ -231,7 +285,7 @@ export class World {
    * Test a ship-sized box at (shipX, z = 0) against nearby obstacles.
    * The first obstacle hit is smashed and returned; null means the way is clear.
    * `travelled` is how far the world scrolled this frame; the test sweeps that span so fast frames cannot skip thin walls.
-   * Pyramids taper, so their footprint is measured at the ship's height.
+   * Tapered obstacles narrow toward the top, so their footprint is measured at the ship's height.
    */
   collide(shipX: number, shipY: number, halfWidth: number, halfDepth: number, travelled: number): Obstacle | null {
     const offset = this.group.position.z
@@ -239,7 +293,7 @@ export class World {
       const chunkZ = chunk.group.position.z + offset
       if (Math.abs(chunkZ) > WORLD.chunkLength / 2 + halfDepth + travelled) continue
       for (const obstacle of chunk.obstacles) {
-        const taper = obstacle.kind === 'pyramid' ? Math.max(0, 1 - shipY / obstacle.height) : 1
+        const taper = obstacle.taper ? Math.max(0, 1 - shipY / obstacle.height) : 1
         const reach = (obstacle.depth * taper) / 2 + halfDepth
         const z = chunkZ + obstacle.z
         const hitZ = z > -reach && z - travelled < reach
@@ -255,6 +309,6 @@ export class World {
 
   private populate(chunk: Chunk): void {
     const runIndex = chunk.index - this.runStart
-    chunk.placeObstacles(this.calm ? 0 : obstacleCountFor(runIndex), runIndex)
+    chunk.layout(this.theme, this.calm ? 0 : obstacleCountFor(runIndex), runIndex)
   }
 }

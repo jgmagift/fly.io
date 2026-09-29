@@ -2,8 +2,21 @@ import { clamp } from './math'
 
 const LEFT_KEYS = ['ArrowLeft', 'KeyA']
 const RIGHT_KEYS = ['ArrowRight', 'KeyD']
+const UP_KEYS = ['ArrowUp', 'KeyW']
+const DOWN_KEYS = ['ArrowDown', 'KeyS']
 const CONFIRM_KEYS = ['Space', 'Enter']
-const GAME_KEYS = new Set([...LEFT_KEYS, ...RIGHT_KEYS, ...CONFIRM_KEYS, 'Escape', 'KeyM', 'KeyC', 'KeyP', 'KeyQ'])
+const GAME_KEYS = new Set([
+  ...LEFT_KEYS,
+  ...RIGHT_KEYS,
+  ...UP_KEYS,
+  ...DOWN_KEYS,
+  ...CONFIRM_KEYS,
+  'Escape',
+  'KeyM',
+  'KeyC',
+  'KeyP',
+  'KeyQ',
+])
 
 /** Button slots in the standard WebXR controller layout, which Quest Touch controllers use. */
 const XR_BUTTON = { trigger: 0, grip: 1, aOrX: 4, bOrY: 5 } as const
@@ -14,7 +27,9 @@ const XR_FLICK_REARM = 0.3
 
 interface XRPadState {
   buttons: boolean[]
-  flickArmed: boolean
+  /** Whether each thumbstick axis is back near centre and may fire a flick again. */
+  flickArmedX: boolean
+  flickArmedY: boolean
 }
 
 /** Haptics on XR gamepads are not in the DOM typings yet, so describe just the part we use. */
@@ -88,6 +103,13 @@ export class Input {
     return right - left
   }
 
+  /** A fresh up or down press or thumbstick flick, as -1 (up) or +1 (down), for a second menu list. */
+  consumeVerticalStep(): number {
+    const up = this.consumeKey(...UP_KEYS, 'XRUp') ? 1 : 0
+    const down = this.consumeKey(...DOWN_KEYS, 'XRDown') ? 1 : 0
+    return down - up
+  }
+
   /** Forget unconsumed presses. Call on every screen change so old presses never leak into the next screen. */
   clearPresses(): void {
     this.pressed.clear()
@@ -115,12 +137,13 @@ export class Input {
       if (!pad) continue
       this.xrSources.push(source)
       const x = pad.axes[2] ?? pad.axes[0] ?? 0
+      const y = pad.axes[3] ?? pad.axes[1] ?? 0
       if (Math.abs(x) > Math.abs(stick)) stick = x
       const buttons = pad.buttons.map((button) => button.pressed)
 
       const state = this.xrPads.get(source)
       if (!state) {
-        this.xrPads.set(source, { buttons, flickArmed: Math.abs(x) < XR_FLICK_REARM })
+        this.xrPads.set(source, { buttons, flickArmedX: Math.abs(x) < XR_FLICK_REARM, flickArmedY: Math.abs(y) < XR_FLICK_REARM })
         continue
       }
       const fresh = (index: number) => buttons[index] === true && state.buttons[index] !== true
@@ -130,15 +153,21 @@ export class Input {
       if (fresh(XR_BUTTON.grip)) this.pressed.add('XRBack')
       state.buttons = buttons
 
-      if (state.flickArmed && Math.abs(x) > XR_FLICK_FIRE) {
-        this.pressed.add(x < 0 ? 'XRLeft' : 'XRRight')
-        state.flickArmed = false
-      } else if (!state.flickArmed && Math.abs(x) < XR_FLICK_REARM) {
-        state.flickArmed = true
-      }
+      state.flickArmedX = this.flick(state.flickArmedX, x, 'XRLeft', 'XRRight')
+      // Pushing the stick forward reads negative.
+      state.flickArmedY = this.flick(state.flickArmedY, y, 'XRUp', 'XRDown')
     }
     const magnitude = Math.abs(stick)
     this.xrSteer = magnitude < XR_DEADZONE ? 0 : (Math.sign(stick) * (magnitude - XR_DEADZONE)) / (1 - XR_DEADZONE)
+  }
+
+  /** Turn one thumbstick axis into one-shot presses. Returns whether the axis is armed for the next flick. */
+  private flick(armed: boolean, value: number, negative: string, positive: string): boolean {
+    if (armed && Math.abs(value) > XR_FLICK_FIRE) {
+      this.pressed.add(value < 0 ? negative : positive)
+      return false
+    }
+    return armed || Math.abs(value) < XR_FLICK_REARM
   }
 
   /** Buzz every VR controller. `intensity` is 0 to 1. Does nothing outside VR or without haptics. */

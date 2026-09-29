@@ -261,6 +261,61 @@ body {
   flex: 1;
 }
 
+/* ---------- world picker */
+.menu-world {
+  display: flex;
+  align-items: center;
+  gap: clamp(6px, 3vw, 24px);
+  margin-bottom: 18px;
+}
+
+.menu-world-arrow {
+  width: 34px;
+  height: 34px;
+  font: inherit;
+  font-size: 22px;
+  line-height: 1;
+  color: #fff4d6;
+  background: rgba(32, 22, 40, 0.3);
+  border: 1px solid rgba(255, 244, 214, 0.4);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.menu-world-arrow:hover {
+  filter: brightness(1.12);
+}
+
+.menu-world-body {
+  width: min(240px, 50vw);
+}
+
+.menu-world-label {
+  font-size: 9px;
+  letter-spacing: 0.3em;
+  margin-right: -0.3em;
+  opacity: 0.7;
+}
+
+.menu-world-name {
+  margin-top: 2px;
+  font-size: clamp(16px, 3.6vw, 22px);
+  letter-spacing: 0.28em;
+  margin-right: -0.28em;
+}
+
+.menu-world-tagline {
+  margin-top: 3px;
+  min-height: 14px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  opacity: 0.8;
+}
+
+.menu-world .menu-dots {
+  margin-top: 8px;
+}
+
 .menu-picker {
   display: flex;
   align-items: center;

@@ -99,8 +99,11 @@ export const WORLD = {
   groundSegmentsZ: 10,
   /** Half-width of the flat strip the ship can fly in. Hills start just outside it. */
   playHalfWidth: 140,
-  maxBoxesPerChunk: 24,
-  maxPyramidsPerChunk: 10,
+  maxObstaclesPerChunk: 34,
+  /** Instance slots per chunk for the boxes, pyramids and cloud puffs that every obstacle and decoration is built from. */
+  boxCapacity: 400,
+  pyramidCapacity: 48,
+  cloudCapacity: 128,
   /** Chunks with an index below this are kept empty so every run starts calmly. */
   calmChunks: 2,
   /** Minimum clearance kept between obstacles so there is always a way through. */
@@ -111,27 +114,9 @@ export const WORLD = {
   rebaseDistance: 4000,
 } as const
 
+/** Colours, fog and the sun's place in the sky belong to each world: see worlds.ts. */
 export const SKY = {
   radius: 750,
   /** Angular radius of the sun disc, in degrees. Far bigger than real life, on purpose. */
   sunDiscDegrees: 4,
-  fogNear: 140,
-  fogFar: 540,
-} as const
-
-export const PALETTE = {
-  skyZenith: 0x2b3766,
-  skyUpper: 0x7f5f95,
-  skyLower: 0xe0836f,
-  skyHorizon: 0xf6b57d,
-  sunDisc: 0xfff4d6,
-  sunGlow: 0xffd39a,
-  fog: 0xf6b57d,
-  ground: 0xcdb394,
-  obstacle: 0x201d24,
-  ship: 0xf7f5ef,
-  shipAccent: 0xe0572f,
-  sunLight: 0xffb474,
-  hemiSky: 0x7c72ad,
-  hemiGround: 0x6e5643,
 } as const

@@ -1,7 +1,7 @@
 import { Fog, PCFShadowMap, Scene, Vector3, WebGLRenderer } from 'three'
 import { GameAudio } from './audio'
 import { FollowCamera } from './camera'
-import { CAMERA, CAMERA_VIEWS, GAME, PALETTE, SHIP, SKY } from './constants'
+import { CAMERA, CAMERA_VIEWS, GAME, SHIP } from './constants'
 import { Hud } from './hud'
 import type { RunSummary } from './hud'
 import { Input } from './input'
@@ -16,6 +16,8 @@ import { Sun } from './sun'
 import { Trails } from './trail'
 import { VrHud } from './vrhud'
 import { World } from './world'
+import { WORLDS, loadWorldIndex, saveWorldIndex } from './worlds'
+import type { WorldTheme } from './worlds'
 
 type GameState = 'menu' | 'playing' | 'paused' | 'gameover'
 
@@ -31,9 +33,10 @@ export class Game {
   private readonly audio = new GameAudio()
   private readonly ship: Ship
   private readonly trails = new Trails()
-  private readonly world = new World()
+  private readonly world: World
   private readonly sun: Sun
   private readonly sky: Sky
+  private readonly fog: Fog
   private readonly follow: FollowCamera
   private readonly hud: Hud
   private readonly vrHud = new VrHud()
@@ -43,6 +46,7 @@ export class Game {
 
   private state: GameState = 'menu'
   private planeIndex = loadPlaneIndex()
+  private worldIndex = loadWorldIndex()
   private best = loadBest()
   private time = 0
   private speed: number = SHIP.forwardSpeed
@@ -77,13 +81,16 @@ export class Game {
     this.ship = new Ship(PLANES[this.planeIndex]!)
     // Phones get a smaller shadow map; the fitted frustum keeps it looking fine.
     this.flatShadowMapSize = this.input.isTouchDevice ? 2048 : 4096
-    this.sun = new Sun(this.flatShadowMapSize)
-    this.sky = new Sky(this.sun.direction)
+    const theme = WORLDS[this.worldIndex]!
+    this.world = new World(theme)
+    this.sun = new Sun(this.flatShadowMapSize, theme)
+    this.sky = new Sky(theme)
+    this.fog = new Fog(theme.palette.fog, theme.fogNear, theme.fogFar)
     this.follow = new FollowCamera(window.innerWidth / window.innerHeight)
     this.follow.rig.add(this.vrHud.group)
     this.follow.camera.add(this.vrHud.flashMesh, this.vrHud.comfortMesh)
 
-    this.scene.fog = new Fog(PALETTE.fog, SKY.fogNear, SKY.fogFar)
+    this.scene.fog = this.fog
     this.scene.add(
       this.sky.mesh,
       this.world.group,
@@ -105,7 +112,13 @@ export class Game {
     })
     this.hud.setSound(this.audio.muted)
     this.hud.setCamera(CAMERA_VIEWS[this.follow.view].label)
-    this.menu = new Menu(hudRoot, { onStep: this.stepPlane, onPlay: this.startRun, onEnterVR: this.enterVR })
+    this.menu = new Menu(hudRoot, {
+      onStep: this.stepPlane,
+      onStepWorld: this.stepWorld,
+      onPlay: this.startRun,
+      onEnterVR: this.enterVR,
+    })
+    this.applyWorld(theme)
     this.loop = new GameLoop(this.frame)
 
     window.addEventListener('resize', this.resize)
@@ -167,6 +180,8 @@ export class Game {
   private browse(dt: number, inVR: boolean): void {
     const step = this.input.consumeStep()
     if (step !== 0) this.stepPlane(step)
+    const worldStep = this.input.consumeVerticalStep()
+    if (worldStep !== 0) this.stepWorld(worldStep)
     if (this.input.consumeKey('Space', 'Enter', 'XRConfirm')) {
       this.startRun()
       return
@@ -192,7 +207,7 @@ export class Game {
     this.menu.setPlane(this.ship.plane, this.planeIndex, PLANES.length)
     this.menu.setBest(this.best)
     this.menu.show()
-    this.vrHud.showMenu(this.ship.plane, this.planeIndex, PLANES.length, this.best)
+    this.showVrMenu()
     this.input.clearPresses()
   }
 
@@ -203,10 +218,38 @@ export class Game {
     this.ship.setPlane(plane)
     this.trails.reset(this.ship)
     this.menu.setPlane(plane, this.planeIndex, PLANES.length)
-    this.vrHud.showMenu(plane, this.planeIndex, PLANES.length, this.best)
+    this.showVrMenu()
     savePlaneIndex(this.planeIndex)
     this.audio.select()
     this.input.pulse(0.25, 30)
+  }
+
+  /** Swap the landscape, sky and light for another world, in place, while the menu is up. */
+  private readonly stepWorld = (delta: number): void => {
+    if (this.state !== 'menu') return
+    this.worldIndex = (this.worldIndex + delta + WORLDS.length) % WORLDS.length
+    const theme = WORLDS[this.worldIndex]!
+    this.world.setTheme(theme)
+    this.applyWorld(theme)
+    this.showVrMenu()
+    saveWorldIndex(this.worldIndex)
+    this.audio.select()
+    this.input.pulse(0.25, 30)
+  }
+
+  /** Dress the sky, light, fog, page and menu for a world. The landscape itself is rebuilt by World.setTheme. */
+  private applyWorld(theme: WorldTheme): void {
+    this.sky.setTheme(theme)
+    this.sun.setTheme(theme)
+    this.fog.color.setHex(theme.palette.fog)
+    this.fog.near = theme.fogNear
+    this.fog.far = theme.fogFar
+    document.body.style.background = `#${theme.palette.fog.toString(16).padStart(6, '0')}`
+    this.menu.setWorld(theme, this.worldIndex, WORLDS.length)
+  }
+
+  private showVrMenu(): void {
+    this.vrHud.showMenu(this.ship.plane, this.planeIndex, PLANES.length, this.best, WORLDS[this.worldIndex]!)
   }
 
   // ---- run
@@ -408,7 +451,7 @@ export class Game {
     this.follow.setXR(true)
     this.sun.setShadowMapSize(VR_SHADOW_MAP_SIZE)
     this.vrHud.setVisible(true)
-    if (this.state === 'menu') this.vrHud.showMenu(this.ship.plane, this.planeIndex, PLANES.length, this.best)
+    if (this.state === 'menu') this.showVrMenu()
     else if (this.state === 'playing') this.vrHud.showRun()
     else if (this.state === 'paused') this.vrHud.showPause()
     else this.vrHud.showGameOver(this.lastRun)

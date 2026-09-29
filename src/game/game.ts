@@ -6,6 +6,7 @@ import { Hud } from './hud'
 import type { RunSummary } from './hud'
 import { Input } from './input'
 import { GameLoop } from './loop'
+import { approach } from './math'
 import { Menu } from './menu'
 import { PLANES, loadPlaneIndex, savePlaneIndex } from './planes'
 import { loadBest, saveBest } from './score'
@@ -58,6 +59,8 @@ export class Game {
   private lastRun: RunSummary = { score: 0, best: 0, isNewBest: false, distance: 0 }
   /** Distance the world scrolled this frame. The trails stream back by this much. */
   private scrolled = 0
+  /** How far the VR comfort vignette is closed in, 0 to 1. */
+  private comfort = 0
 
   constructor(canvas: HTMLCanvasElement, hudRoot: HTMLElement) {
     this.renderer = new WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' })
@@ -78,7 +81,7 @@ export class Game {
     this.sky = new Sky(this.sun.direction)
     this.follow = new FollowCamera(window.innerWidth / window.innerHeight)
     this.follow.rig.add(this.vrHud.group)
-    this.follow.camera.add(this.vrHud.flashMesh)
+    this.follow.camera.add(this.vrHud.flashMesh, this.vrHud.comfortMesh)
 
     this.scene.fog = new Fog(PALETTE.fog, SKY.fogNear, SKY.fogFar)
     this.scene.add(
@@ -150,6 +153,10 @@ export class Game {
         const view = CAMERA_VIEWS[this.follow.view].label
         this.vrHud.updateRun(dt, this.score, this.multiplier, this.speed, this.lives, this.ship.plane.lives, view)
       }
+      // The cockpit rides with the plane and already feels steady, so only the views behind it close in.
+      const sliding = flying && this.follow.view !== 'cockpit' ? Math.abs(this.ship.vx) / this.ship.plane.maxLateralSpeed : 0
+      this.comfort = approach(this.comfort, Math.min(1, sliding), GAME.comfortResponse, dt)
+      this.vrHud.setComfort(this.comfort)
       this.vrHud.update(dt)
     }
     this.renderer.render(this.scene, this.follow.camera)

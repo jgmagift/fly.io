@@ -29,6 +29,8 @@ export const GAME = {
   /** Resuming from pause counts down 3, 2, 1, so the player has a moment to get ready. */
   resumeSteps: 3,
   resumeStepSeconds: 0.6,
+  /** How quickly the VR comfort vignette closes in and opens up (per second). */
+  comfortResponse: 6,
 } as const
 
 export const CAMERA = {

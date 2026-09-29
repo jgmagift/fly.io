@@ -6,6 +6,7 @@ import {
   MeshBasicMaterial,
   PlaneGeometry,
   SRGBColorSpace,
+  ShaderMaterial,
   SphereGeometry,
 } from 'three'
 import type { RunSummary } from './hud'
@@ -21,6 +22,10 @@ const ACCENT = '#e0572f'
 const BACKDROP = 'rgba(32, 22, 40, 0.8)'
 /** Seconds between redraws of the in-run readout. The score changes every frame; the texture upload need not. */
 const RUN_REDRAW_INTERVAL = 0.1
+/** Comfort vignette: clear within this angle of where the player looks, fully dark past the outer one, in radians. */
+const VIGNETTE_INNER = 0.45
+const VIGNETTE_OUTER = 0.95
+const VIGNETTE_MAX_OPACITY = 0.92
 
 const STAT_LABELS = [
   ['agility', 'AGILITY'],
@@ -104,11 +109,15 @@ function text(ctx: CanvasRenderingContext2D, value: string, x: number, y: number
  * The HUD, menu and game-over screens for VR, where the page's HTML overlay cannot be seen.
  * Panels hang below the line of sight, fixed to the camera rig rather than to the head, which is
  * easier on the eyes. A red sphere around the head stands in for the screen flash on impact.
+ * A dark ring around the edge of sight, the comfort vignette, closes in while the player slides
+ * sideways, because sideways motion at the edge of vision is what makes people sick.
  */
 export class VrHud {
   readonly group = new Group()
   /** Parent this to the camera, so the flash surrounds the player's head. */
   readonly flashMesh: Mesh<SphereGeometry, MeshBasicMaterial>
+  /** Parent this to the camera too, so the vignette's clear centre follows the player's gaze. */
+  readonly comfortMesh: Mesh<SphereGeometry, ShaderMaterial>
   private readonly board = new CanvasPanel(1024, 640, 1.3)
   private readonly strip = new CanvasPanel(1024, 176, 1.1)
   private flashLevel = 0
@@ -137,6 +146,42 @@ export class VrHud {
     )
     this.flashMesh.renderOrder = 11
     this.flashMesh.visible = false
+
+    // Under the HUD panels (renderOrder 10), so the score stays readable while the vignette is closed in.
+    this.comfortMesh = new Mesh(
+      new SphereGeometry(0.3, 32, 16),
+      new ShaderMaterial({
+        uniforms: { opacity: { value: 0 } },
+        vertexShader: /* glsl */ `
+          varying vec3 vDirection;
+          void main() {
+            vDirection = position;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: /* glsl */ `
+          uniform float opacity;
+          varying vec3 vDirection;
+          void main() {
+            float angle = acos(clamp(-normalize(vDirection).z, -1.0, 1.0));
+            float edge = smoothstep(${VIGNETTE_INNER.toFixed(3)}, ${VIGNETTE_OUTER.toFixed(3)}, angle);
+            gl_FragColor = vec4(0.08, 0.055, 0.1, edge * opacity);
+          }
+        `,
+        transparent: true,
+        side: BackSide,
+        depthTest: false,
+        depthWrite: false,
+      }),
+    )
+    this.comfortMesh.renderOrder = 9
+    this.comfortMesh.visible = false
+  }
+
+  /** Close the comfort vignette in by `amount`, 0 (fully open) to 1. */
+  setComfort(amount: number): void {
+    this.comfortMesh.material.uniforms.opacity!.value = amount * VIGNETTE_MAX_OPACITY
+    this.comfortMesh.visible = amount > 0.01
   }
 
   get visible(): boolean {
@@ -147,6 +192,7 @@ export class VrHud {
     this.group.visible = visible
     this.flashLevel = 0
     this.flashMesh.visible = false
+    this.setComfort(0)
   }
 
   showMenu(plane: PlaneSpec, index: number, count: number, best: number): void {

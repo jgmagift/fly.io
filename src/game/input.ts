@@ -190,6 +190,8 @@ export class Input {
   }
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
+    // Typing into a text box, such as the leaderboard name, is not steering.
+    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return
     if (!GAME_KEYS.has(event.code)) return
     event.preventDefault()
     this.keysDown.add(event.code)

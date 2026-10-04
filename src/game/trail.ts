@@ -81,7 +81,7 @@ class Trail {
     this.writeSample(0)
 
     // Fade by distance behind the wingtip, and by age so a slow scroll still ends softly.
-    this.color.setHex(ship.plane.trailColor)
+    this.color.setHex(ship.trailColor)
     const headZ = this.positions[2]!
     for (let i = 0; i < SAMPLES; i++) {
       const byDistance = 1 - (this.positions[i * 6 + 2]! - headZ) / LENGTH

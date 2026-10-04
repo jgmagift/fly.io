@@ -7,6 +7,8 @@ export interface PlaneSpec {
   id: string
   name: string
   tagline: string
+  /** Gems to unlock. The first plane is free. */
+  price: number
   hullColor: number
   accentColor: number
   /** Crashes the plane survives per run. */
@@ -74,7 +76,15 @@ function fin(
   ]
 }
 
-interface PlaneDesign extends Omit<PlaneSpec, 'hull' | 'wingtip' | 'trailColor'> {
+/** Gems to unlock each plane, by id. Anything not listed is free. */
+const PRICES: Record<string, number> = {
+  manta: 100, needle: 150, falcon: 200, kite: 250, arrow: 300, boomer: 400, stiletto: 500,
+  heron: 600, viper: 750, titan: 900, wisp: 1000, raptor: 1500,
+  swan: 400, clover: 500, puff: 600, lamb: 800, sparrow: 1000, zephyr: 1500,
+  aurora: 5000,
+}
+
+interface PlaneDesign extends Omit<PlaneSpec, 'hull' | 'wingtip' | 'trailColor' | 'price'> {
   /** Right-hand outline from nose to tail, as seen from above. Must sweep steadily rearward around the spine. */
   outline: Point[]
   spine: Point
@@ -85,7 +95,13 @@ interface PlaneDesign extends Omit<PlaneSpec, 'hull' | 'wingtip' | 'trailColor'>
 function definePlane(design: PlaneDesign): PlaneSpec {
   const { outline, spine, keel, trailColor, ...rest } = design
   const wingtip = outline.reduce((widest, point) => (point[0] > widest[0] ? point : widest))
-  return { ...rest, hull: fanHull(outline, spine, keel), wingtip, trailColor: trailColor ?? design.accentColor }
+  return {
+    ...rest,
+    price: PRICES[design.id] ?? 0,
+    hull: fanHull(outline, spine, keel),
+    wingtip,
+    trailColor: trailColor ?? design.accentColor,
+  }
 }
 
 /** A matching pair of fins either side of the centre line. */

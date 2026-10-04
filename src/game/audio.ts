@@ -1,5 +1,3 @@
-const MUTE_KEY = 'fly.muted'
-
 /** Drop a file with this name into the project's public/ folder to replace the built-in music. */
 const CUSTOM_MUSIC_URL = 'music.mp3'
 
@@ -20,6 +18,8 @@ const ARP_PATTERN = [0, 1, 2, 3, 2, 3, 1, 2] as const
 interface Nodes {
   ctx: AudioContext
   master: GainNode
+  /** Everything that is not music: engine, wind, crashes, pickups and menu blips. */
+  sfx: GainNode
   music: GainNode
   noise: AudioBuffer
   engineGain: GainNode
@@ -44,7 +44,8 @@ interface ToneOptions {
  * The music is a small step sequencer: plucked arpeggio and bass always, drums only while flying.
  */
 export class GameAudio {
-  muted = loadMuted()
+  private musicOn = true
+  private sfxOn = true
   private nodes: Nodes | null = null
   private step = 0
   private nextStepAt = 0
@@ -56,16 +57,12 @@ export class GameAudio {
     window.addEventListener('keydown', this.unlock)
   }
 
-  toggleMute(): boolean {
-    this.muted = !this.muted
-    try {
-      localStorage.setItem(MUTE_KEY, this.muted ? '1' : '0')
-    } catch {
-      // Not remembering the mute setting is harmless.
-    }
+  /** Switch the music and the sound effects on or off, separately. */
+  setMix(music: boolean, sfx: boolean): void {
+    this.musicOn = music
+    this.sfxOn = sfx
     const nodes = this.nodes
-    if (nodes) nodes.master.gain.setTargetAtTime(this.muted ? 0 : 1, nodes.ctx.currentTime, 0.05)
-    return this.muted
+    if (nodes) nodes.sfx.gain.setTargetAtTime(sfx ? 1 : 0, nodes.ctx.currentTime, 0.05)
   }
 
   /** Call every frame. `speedRatio` is 0 at starting speed and 1 at top speed. `subdued` ducks the music. */
@@ -77,7 +74,7 @@ export class GameAudio {
     nodes.engineFilter.frequency.setTargetAtTime(350 + 900 * speedRatio + Math.abs(steer) * 250, now, 0.1)
     nodes.engineTone.frequency.setTargetAtTime(55 + 45 * speedRatio, now, 0.2)
     nodes.enginePan.pan.setTargetAtTime(steer * 0.35, now, 0.1)
-    nodes.music.gain.setTargetAtTime(subdued ? 0.25 : 0.8, now, 0.4)
+    nodes.music.gain.setTargetAtTime(!this.musicOn ? 0 : subdued ? 0.25 : 0.8, now, 0.4)
 
     if (this.customMusic) return
     // Schedule a little ahead of the clock so timing stays tight even when frames are late.
@@ -100,6 +97,24 @@ export class GameAudio {
   multiplierUp(): void {
     this.tone(523.25, 0.09, { type: 'triangle', gain: 0.14 })
     this.tone(783.99, 0.14, { type: 'triangle', gain: 0.14, delay: 0.08 })
+  }
+
+  /** A gem picked up. */
+  collect(): void {
+    this.tone(1318.5, 0.07, { type: 'triangle', gain: 0.1 })
+    this.tone(1760, 0.1, { type: 'triangle', gain: 0.1, delay: 0.05 })
+  }
+
+  /** A plane or skin unlocked. */
+  unlocked(): void {
+    this.tone(523.25, 0.1, { type: 'triangle', gain: 0.14 })
+    this.tone(659.25, 0.1, { type: 'triangle', gain: 0.14, delay: 0.09 })
+    this.tone(1046.5, 0.3, { type: 'triangle', gain: 0.14, delay: 0.18 })
+  }
+
+  /** Not enough gems. */
+  denied(): void {
+    this.tone(180, 0.16, { type: 'sawtooth', gain: 0.1, slideTo: 120 })
   }
 
   crash(): void {
@@ -128,8 +143,11 @@ export class GameAudio {
   private build(): Nodes {
     const ctx = new AudioContext()
     const master = ctx.createGain()
-    master.gain.value = this.muted ? 0 : 1
+    master.gain.value = 1
     master.connect(ctx.destination)
+    const sfx = ctx.createGain()
+    sfx.gain.value = this.sfxOn ? 1 : 0
+    sfx.connect(master)
 
     // Two seconds of white noise, looped for the wind and reused for crashes and hi-hats.
     const noise = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate)
@@ -138,7 +156,7 @@ export class GameAudio {
 
     // Engine: rushing wind (band-passed noise) plus a low drone, panned slightly into turns.
     const enginePan = ctx.createStereoPanner()
-    enginePan.connect(master)
+    enginePan.connect(sfx)
     const engineGain = ctx.createGain()
     engineGain.gain.value = 0
     engineGain.connect(enginePan)
@@ -178,7 +196,7 @@ export class GameAudio {
     echo.connect(feedback).connect(echo)
     echo.connect(echoLevel).connect(master)
 
-    return { ctx, master, music, noise, engineGain, engineFilter, engineTone, enginePan }
+    return { ctx, master, sfx, music, noise, engineGain, engineFilter, engineTone, enginePan }
   }
 
   /** If the project ships its own track, loop that and silence the sequencer. A missing file is normal. */
@@ -225,7 +243,7 @@ export class GameAudio {
   private tone(frequency: number, duration: number, options: ToneOptions = {}): void {
     const nodes = this.nodes
     if (!nodes) return
-    const { type = 'sine', gain = 0.2, slideTo, delay = 0, out = nodes.master } = options
+    const { type = 'sine', gain = 0.2, slideTo, delay = 0, out = nodes.sfx } = options
     const start = (options.at ?? nodes.ctx.currentTime) + delay
     const oscillator = nodes.ctx.createOscillator()
     oscillator.type = type
@@ -261,16 +279,8 @@ export class GameAudio {
     const envelope = nodes.ctx.createGain()
     envelope.gain.setValueAtTime(gain, start)
     envelope.gain.exponentialRampToValueAtTime(0.0001, start + duration)
-    source.connect(filter).connect(envelope).connect(out ?? nodes.master)
+    source.connect(filter).connect(envelope).connect(out ?? nodes.sfx)
     source.start(start)
     source.stop(start + duration + 0.05)
-  }
-}
-
-function loadMuted(): boolean {
-  try {
-    return localStorage.getItem(MUTE_KEY) === '1'
-  } catch {
-    return false
   }
 }

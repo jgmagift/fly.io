@@ -4,6 +4,8 @@ import { CAMERA, SHIP, WORLD } from './constants'
 import { approach, clamp } from './math'
 import { buildPlaneGeometry } from './planes'
 import type { PlaneSpec } from './planes'
+import { SKINS } from './skins'
+import type { Skin } from './skins'
 
 const COCKPIT_TILT = new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), CAMERA.cockpitPitch)
 const DOWN = new Vector3(0, -1, 0)
@@ -17,6 +19,9 @@ export class Ship {
   /** Current roll in radians. Negative rolls the right wing down. */
   bank = 0
   plane: PlaneSpec
+  skin: Skin = SKINS[0]!
+  /** Colour of the wingtip trails: the skin's, or the plane's own. */
+  trailColor = 0xffffff
   /** First-person eye point in model space: just above the hull, ahead of any fins. */
   readonly cockpit = new Vector3()
 
@@ -44,9 +49,16 @@ export class Ship {
       this.geometries.set(plane.id, geometry)
     }
     this.body.geometry = geometry
-    this.hull.color.setHex(plane.hullColor)
-    this.accent.color.setHex(plane.accentColor)
     this.cockpit.copy(this.cockpitFor(plane.id, geometry))
+    this.setSkin(this.skin)
+  }
+
+  /** Repaint the current plane. */
+  setSkin(skin: Skin): void {
+    this.skin = skin
+    this.hull.color.setHex(skin.hull ?? this.plane.hullColor)
+    this.accent.color.setHex(skin.accent ?? this.plane.accentColor)
+    this.trailColor = skin.trail ?? this.plane.trailColor
   }
 
   reset(): void {

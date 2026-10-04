@@ -34,7 +34,7 @@ export class Menu {
     this.root = document.createElement('div')
     this.root.className = 'menu'
     this.root.innerHTML = `
-      <div class="menu-title">FLY.IO</div>
+      <h1 class="menu-title">FLY.IO</h1>
       <div class="menu-best" data-best></div>
       <div class="menu-spacer"></div>
       <div class="menu-world">
